@@ -23,7 +23,40 @@ Servis durumlarini kontrol etmek icin:
 
 ```bash
 docker compose ps
+# veya: make ps
 ```
+
+### Hizli saglilik kontrolu
+
+- **API:** `GET /health` — Postgres + Redis ping (HTTP 200 / aksi halde 503).
+- **Otomatik test:** `bash scripts/smoke-test.sh` veya `make smoke` (API + istege bagli `radtest` / Postgres).
+- **Gelistirme:** `.env` icinde `UVICORN_RELOAD=1` yapip API container’ini yeniden baslatin; `main.py` degisiklikleri `--reload` ile alinir (`.env.example`).
+
+### Odev raporu
+
+Bos basliklar: `docs/RAPOR-TASLAK.md`  
+**İstek / curl / radtest komutları:** `docs/ISTEK-KOMUTLARI.md`
+
+### Bonus puan (odev PDF — Bolum 6)
+
+Metinde: *“Bonus puanlar (+%5): Her iki auth metodu (PAP + MAB), **monitoring dashboard**, unit test.”*  
+Bunlar **alternatif bonus kalemleri**dir (her biri +%5 havuzundan bir parca olarak degerlendirilir; hepsini ayni anda yapmak zorunlu degil).
+
+Bu repoda **monitoring dashboard**: **Next.js 15** (`monitoring/`) + FastAPI **`GET /monitoring/snapshot`**.
+
+```bash
+docker compose up -d
+# Panel (varsayilan): http://localhost:3000  —  .env: MONITORING_PORT
+curl -s http://localhost:8000/monitoring/snapshot | jq .
+```
+
+Yerel gelistirme (Docker’siz Next): `cd monitoring && npm install && INTERNAL_API_URL=http://127.0.0.1:8000 npm run dev`
+
+Imaj yenileme: `docker compose build monitoring && docker compose up -d monitoring`
+
+**Panel “snapshot alınamadı” diyorsa:** Eski imajda sayfa build anında statik gömülmüş olabilir — `docker compose build monitoring --no-cache && docker compose up -d monitoring`. `.env` içinde **`INTERNAL_API_URL=http://localhost:8000` kullanmayın** (container içinde localhost yanlış host); boş bırakın veya compose’daki `http://api:8000` kalsın.
+
+**`curl .../monitoring/snapshot` → HTTP 404:** API süreci güncel `main.py` yüklemeden çalışıyordur (`uvicorn` varsayılan olarak `--reload` kullanmaz). Çözüm: `docker compose restart api` veya `.env` içinde `UVICORN_RELOAD=1` ile geliştirme. Doğrulama: `curl -s http://localhost:8000/ | jq .` çıktısında `"version": "0.2.2"` ve `"monitoring": "/monitoring/snapshot"` görünmeli.
 
 ## Adim 2 — PAP / CHAP, PostgreSQL, hash, Redis rate limit, radtest
 
@@ -189,5 +222,7 @@ docker exec nac_redis redis-cli --scan --pattern 'nac:acct:*'
 - [ ] MAB (istege bagli): `radtest -x AA-BB-CC-DD-EE-FF ...` → VLAN 30
 - [ ] Rate limit: ardisik basarisiz deneme → `Access-Reject`
 - [ ] `bash scripts/radacct-demo.sh` → `radacct` satiri + (Stop oncesi) Redis anahtari
-- [ ] API: `/docs`, `/users`, `/sessions/active`, `POST /accounting`
+- [ ] API: `/health`, `/docs`, `/users`, `/sessions/active`, `POST /accounting`
+- [ ] `make smoke` veya `bash scripts/smoke-test.sh`
+- [ ] Bonus: monitoring `http://localhost:3000` + videoda kisa gosterim
 - [ ] Kisa video: auth + accounting + API ekran goruntusu

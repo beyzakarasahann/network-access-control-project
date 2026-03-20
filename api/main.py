@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import psycopg
@@ -14,7 +15,7 @@ from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-app = FastAPI(title="NAC Policy Engine", version="0.2.0")
+app = FastAPI(title="NAC Policy Engine", version="0.2.2")
 
 
 def _pg_connect():
@@ -131,7 +132,198 @@ class AccountingRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"message": "NAC API calisiyor"}
+    return {
+        "message": "NAC API calisiyor",
+        "version": "0.2.2",
+        "monitoring": "/monitoring/snapshot",
+        "docs": "/docs",
+    }
+
+
+@app.get("/health")
+def health():
+    """Postgres + Redis baglantisi (compose / monitoring icin)."""
+    pg_ok = False
+    redis_ok = False
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        pg_ok = True
+    except Exception:
+        pass
+    try:
+        _redis().ping()
+        redis_ok = True
+    except Exception:
+        pass
+
+    body: dict[str, Any] = {
+        "status": "ok" if (pg_ok and redis_ok) else "degraded",
+        "postgres": pg_ok,
+        "redis": redis_ok,
+    }
+    if pg_ok and redis_ok:
+        return body
+    return JSONResponse(status_code=503, content=body)
+
+
+def _collect_active_sessions() -> tuple[list[dict[str, Any]], str | None]:
+    """Redis aktif oturum listesi; hata mesaji veya None."""
+    try:
+        r = _redis()
+        out: list[dict[str, Any]] = []
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match="nac:acct:*", count=200)
+            for k in keys:
+                raw = r.get(k)
+                if not raw:
+                    continue
+                parts = raw.split("|")
+                uid = k.split(":", 2)[-1] if ":" in k else k
+                item: dict[str, Any] = {"acct_unique_session_id": uid, "raw": raw}
+                if len(parts) >= 6:
+                    item.update(
+                        {
+                            "username": parts[0],
+                            "nas_ip": parts[1],
+                            "acct_session_id": parts[2],
+                            "acct_input_octets": int(parts[3] or 0),
+                            "acct_output_octets": int(parts[4] or 0),
+                            "acct_session_time": int(parts[5] or 0),
+                        }
+                    )
+                out.append(item)
+            if cursor == 0:
+                break
+        return out, None
+    except Exception as e:
+        return [], str(e)
+
+
+def _redis_count_pattern(match: str, limit: int = 500) -> tuple[int, bool]:
+    """SCAN ile anahtar sayisi; limit asildiyse truncated=True."""
+    try:
+        r = _redis()
+        n = 0
+        cursor = 0
+        truncated = False
+        while True:
+            cursor, keys = r.scan(cursor, match=match, count=200)
+            n += len(keys)
+            if n >= limit:
+                truncated = True
+                break
+            if cursor == 0:
+                break
+        return min(n, limit), truncated
+    except Exception:
+        return 0, False
+
+
+@app.get("/monitoring/snapshot")
+def monitoring_snapshot():
+    """
+    Next.js / monitoring dashboard icin tek JSON.
+    Odev bonus: monitoring dashboard.
+    """
+    ts = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    snap: dict[str, Any] = {
+        "timestamp": ts,
+        "api_version": "0.2.2",
+        "health": {"postgres": False, "redis": False, "status": "degraded"},
+        "sessions": {"count": 0, "items": [], "error": None},
+        "users": {"radcheck_count": 0, "radusergroup_count": 0, "error": None},
+        "accounting": {
+            "radacct_rows": 0,
+            "open_sessions_db": 0,
+            "recent": [],
+            "error": None,
+        },
+        "redis_metrics": {
+            "nac_acct_keys": 0,
+            "nac_acct_keys_truncated": False,
+            "auth_fail_keys": 0,
+            "auth_fail_keys_truncated": False,
+        },
+    }
+
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            snap["health"]["postgres"] = True
+    except Exception:
+        pass
+
+    try:
+        _redis().ping()
+        snap["health"]["redis"] = True
+    except Exception:
+        pass
+
+    if snap["health"]["postgres"] and snap["health"]["redis"]:
+        snap["health"]["status"] = "ok"
+
+    items, s_err = _collect_active_sessions()
+    snap["sessions"]["items"] = items[:50]
+    snap["sessions"]["count"] = len(items)
+    snap["sessions"]["error"] = s_err
+
+    n_acct, tr1 = _redis_count_pattern("nac:acct:*", 500)
+    n_fail, tr2 = _redis_count_pattern("nac_auth_fail_*", 500)
+    snap["redis_metrics"]["nac_acct_keys"] = n_acct
+    snap["redis_metrics"]["nac_acct_keys_truncated"] = tr1
+    snap["redis_metrics"]["auth_fail_keys"] = n_fail
+    snap["redis_metrics"]["auth_fail_keys_truncated"] = tr2
+
+    if not snap["health"]["postgres"]:
+        snap["users"]["error"] = "database_unavailable"
+        snap["accounting"]["error"] = "database_unavailable"
+        return snap
+
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM radcheck")
+                snap["users"]["radcheck_count"] = int(cur.fetchone()[0])
+                cur.execute("SELECT COUNT(*) FROM radusergroup")
+                snap["users"]["radusergroup_count"] = int(cur.fetchone()[0])
+                cur.execute("SELECT COUNT(*) FROM radacct")
+                snap["accounting"]["radacct_rows"] = int(cur.fetchone()[0])
+                cur.execute(
+                    "SELECT COUNT(*) FROM radacct WHERE acctstoptime IS NULL"
+                )
+                snap["accounting"]["open_sessions_db"] = int(cur.fetchone()[0])
+                cur.execute(
+                    """
+                    SELECT username, nasipaddress::text, acctstarttime, acctstoptime,
+                           acctsessiontime, acctinputoctets, acctoutputoctets
+                    FROM radacct
+                    ORDER BY radacctid DESC
+                    LIMIT 8
+                    """
+                )
+                recent = []
+                for row in cur.fetchall():
+                    recent.append(
+                        {
+                            "username": row[0],
+                            "nas_ip": row[1],
+                            "acct_start": row[2].isoformat() if row[2] else None,
+                            "acct_stop": row[3].isoformat() if row[3] else None,
+                            "session_time": int(row[4] or 0),
+                            "in_octets": int(row[5] or 0),
+                            "out_octets": int(row[6] or 0),
+                        }
+                    )
+                snap["accounting"]["recent"] = recent
+    except Exception as e:
+        snap["users"]["error"] = str(e)
+        snap["accounting"]["error"] = str(e)
+
+    return snap
 
 
 @app.post("/authorize")

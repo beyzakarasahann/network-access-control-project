@@ -79,13 +79,22 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      UVICORN_RELOAD: ${UVICORN_RELOAD:-0}
     working_dir: /app
     volumes:
       - ./api:/app
       - api_data:/app/data
-    command: >
-      sh -c "pip install --no-cache-dir -r requirements.txt &&
-             uvicorn main:app --host 0.0.0.0 --port 8000"
+    command:
+      - sh
+      - -c
+      - |
+        pip install --no-cache-dir -r requirements.txt &&
+        if [ "$$UVICORN_RELOAD" = "1" ]; then
+          exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+        else
+          exec uvicorn main:app --host 0.0.0.0 --port 8000
+        fi
     ports:
       - "${API_PORT}:8000"
     healthcheck:
@@ -94,7 +103,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/').read()",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
         ]
       interval: 15s
       timeout: 5s
@@ -104,6 +113,25 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    networks:
+      - nac_network
+
+  monitoring:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile
+    container_name: nac_monitoring
+    restart: always
+    env_file:
+      - .env
+    environment:
+      # .env icindeki INTERNAL_API_URL=localhost monitoring konteynerinde yanlis host olur; sabit ez
+      INTERNAL_API_URL: "http://api:8000"
+    ports:
+      - "${MONITORING_PORT:-3000}:3000"
+    depends_on:
+      api:
         condition: service_healthy
     networks:
       - nac_network
