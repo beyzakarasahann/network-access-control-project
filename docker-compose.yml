@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: nac_postgres
+    restart: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - nac_network
+
+  redis:
+    image: redis:8-alpine
+    container_name: nac_redis
+    restart: always
+    env_file:
+      - .env
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    ports:
+      - "${REDIS_PORT}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis_data:/data
+    networks:
+      - nac_network
+
+  freeradius:
+    image: freeradius/freeradius-server:latest-3.2
+    platform: linux/amd64
+    container_name: nac_radius
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "${RADIUS_AUTH_PORT}:1812/udp"
+      - "${RADIUS_ACCT_PORT}:1813/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep '[f]reeradius' >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ./freeradius/config:/etc/freeradius
+      - radius_logs:/var/log/freeradius
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nac_network
+
+  api:
+    image: python:3.13-slim
+    container_name: nac_api
+    restart: always
+    env_file:
+      - .env
+    working_dir: /app
+    volumes:
+      - ./api:/app
+      - api_data:/app/data
+    command: >
+      sh -c "pip install --no-cache-dir fastapi uvicorn &&
+             uvicorn main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "${API_PORT}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/').read()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      freeradius:
+        condition: service_healthy
+    networks:
+      - nac_network
+
+networks:
+  nac_network:
+    name: nac_dedicated_network
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  radius_logs:
+  api_data:

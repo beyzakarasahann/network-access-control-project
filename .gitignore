@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------------------
+# Secrets & environment (asla commit edilmemeli)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.local
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+env/
+ENV/
+.python-version
+
+# Test / lint / type check
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ---------------------------------------------------------------------------
+# macOS
+# ---------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ---------------------------------------------------------------------------
+# Editors / IDE
+# ---------------------------------------------------------------------------
+.idea/
+*.swp
+*.swo
+*~
+
+# VS Code (takım ayarları commitlenecekse bu satırı sil veya daralt)
+.vscode/
+
+# ---------------------------------------------------------------------------
+# Docker (opsiyonel yerel override)
+# ---------------------------------------------------------------------------
+docker-compose.override.yml
+
+# ---------------------------------------------------------------------------
+# FreeRADIUS / TLS: private key ve hassas üretim dosyaları
+# (Örnek: ca.key, server.key, birleşik PEM, PKCS#12, CA veritabanı)
+# NOT: Bu dosyalar daha önce commit edildiyse: git rm -r --cached freeradius/config/certs/
+# ---------------------------------------------------------------------------
+freeradius/config/certs/*.key
+freeradius/config/certs/*.p12
+freeradius/config/certs/passwords.mk
+freeradius/config/certs/index.txt*
+freeradius/config/certs/serial*
+freeradius/config/certs/*.csr
+# PEM genelde cert+key içerir; public sertifika gerekiyorsa .crt veya ayrı ca.pem kullan
+freeradius/config/certs/**/*.pem
+
+# ---------------------------------------------------------------------------
+# Redis / DB yerel dökümler (bind mount veya yanlışlıkla oluşursa)
+# ---------------------------------------------------------------------------
+dump.rdb
+appendonly.aof
+*.rdb
+
+# ---------------------------------------------------------------------------
+# Loglar & geçici dosyalar
+# ---------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# ---------------------------------------------------------------------------
+# Proje içi uygulama verisi (volume mount)
+# ---------------------------------------------------------------------------
+api/data/
