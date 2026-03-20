@@ -1,153 +1,247 @@
-# network-access-control-project
+# Ağ Erişim Kontrolü (NAC) — Laboratuvar Projesi
 
-Docker altyapisi asagidaki ek gereksinimlerle guncellenmistir:
+Docker tabanlı **Network Access Control** demonstrasyonu: **FreeRADIUS 3.2**, **PostgreSQL** (FreeRADIUS SQL modülü), **Redis** (rate limit + aktif oturum özeti), **FastAPI** (`rlm_rest` ile yetkilendirme + HTTP accounting). İsteğe bağlı **Next.js** izleme paneli (ödev bonusu).
 
-- Servisler arasi iletisim icin dedicated bridge network: `nac_dedicated_network`
-- Tum servislerde `.env` tabanli environment variable kullanimi
-- Her servis icin `healthcheck` tanimi
-- Konfigurasyon ve veri kaliciligi icin volume mount yapisi
+**API sürümü:** `0.2.2` (`api/main.py` → FastAPI `version`).
 
-## Ortam degiskenleri
+---
 
-1. `.env.example` dosyasini kopyalayip `.env` olusturun.
-2. `POSTGRES_PASSWORD` degerini guclu bir sifre ile degistirin.
-3. `.env` dosyasi `.gitignore` icinde oldugu icin git'e dahil edilmez.
+## İçindekiler
 
-## Calistirma
+1. [Gereksinimler](#gereksinimler)
+2. [Hızlı başlangıç](#hizli-baslangic)
+3. [Mimari ve servisler](#mimari-ve-servisler)
+4. [Depo yapısı](#depo-yapisi)
+5. [Ortam değişkenleri](#ortam-degiskenleri)
+6. [Veritabanı başlatma (init sırası)](#veritabani-init)
+7. [Sağlık kontrolü ve smoke test](#saglik-ve-smoke)
+8. [Dokümantasyon (rapor / komutlar)](#dokumantasyon)
+9. [Adım 2 — Kimlik doğrulama](#adim-2-auth)
+10. [Adım 3 — Yetkilendirme](#adim-3-authorize)
+11. [Adım 4 — Accounting](#adim-4-accounting)
+12. [Bonus: İzleme paneli](#bonus-monitoring)
+13. [Teslim kontrol listesi](#teslim-checklist)
+14. [Sorun giderme](#sorun-giderme)
+
+---
+
+<a id="gereksinimler"></a>
+## Gereksinimler
+
+- **Docker** ve **Docker Compose** (v2)
+- FreeRADIUS imajı `linux/amd64` — Apple Silicon’da Docker **Rosetta / QEMU** emülasyonu kullanılır
+- İsteğe bağlı: `make` (kökteki `Makefile` kısayolları için)
+
+---
+
+<a id="hizli-baslangic"></a>
+## Hızlı başlangıç
 
 ```bash
+cp .env.example .env
+# .env içinde POSTGRES_PASSWORD değerini güçlü bir parola ile değiştirin
+
 docker compose up -d
-```
-
-Servis durumlarini kontrol etmek icin:
-
-```bash
 docker compose ps
-# veya: make ps
 ```
 
-### Hizli saglilik kontrolu
+**Beklenen:** `postgres`, `redis`, `api` sağlıklı olduktan sonra `freeradius` ayağa kalkar; isteğe bağlı `monitoring` ayrı servistir.
 
-- **API:** `GET /health` — Postgres + Redis ping (HTTP 200 / aksi halde 503).
-- **Otomatik test:** `bash scripts/smoke-test.sh` veya `make smoke` (API + istege bagli `radtest` / Postgres).
-- **Gelistirme:** `.env` icinde `UVICORN_RELOAD=1` yapip API container’ini yeniden baslatin; `main.py` degisiklikleri `--reload` ile alinir (`.env.example`).
+---
 
-### Odev raporu
+<a id="mimari-ve-servisler"></a>
+## Mimari ve servisler
 
-Bos basliklar: `docs/RAPOR-TASLAK.md`  
-**İstek / curl / radtest komutları:** `docs/ISTEK-KOMUTLARI.md`
+| Servis (Compose adı) | Konteyner adı   | Rol | Varsayılan erişim |
+|----------------------|-----------------|-----|-------------------|
+| `postgres`           | `nac_postgres`  | FreeRADIUS + API veritabanı, `db/init/*.sql` ile seed | `${POSTGRES_PORT}:5432` |
+| `redis`              | `nac_redis`     | Auth rate limit, accounting oturum anahtarları | `${REDIS_PORT}:6379` |
+| `api`                | `nac_api`       | FastAPI: `/authorize`, `/accounting`, `/users`, … | `${API_PORT}:8000` |
+| `freeradius`         | `nac_radius`    | RADIUS auth (1812/udp), acct (1813/udp), `rlm_sql` + `rlm_rest` | `.env` portları |
+| `monitoring` (bonus) | `nac_monitoring`| Next.js panel → API `GET /monitoring/snapshot` | `${MONITORING_PORT:-3000}:3000` |
 
-### Bonus puan (odev PDF — Bolum 6)
+**Ağ:** Tüm servisler köprü ağı **`nac_dedicated_network`** üzerinde konuşur (`.env` ile isim sabitlenir).
 
-Metinde: *“Bonus puanlar (+%5): Her iki auth metodu (PAP + MAB), **monitoring dashboard**, unit test.”*  
-Bunlar **alternatif bonus kalemleri**dir (her biri +%5 havuzundan bir parca olarak degerlendirilir; hepsini ayni anda yapmak zorunlu degil).
+**Bağımlılık sırası:** RADIUS, API’nin sağlıklı olmasına bağlıdır (`rlm_rest` için).
 
-Bu repoda **monitoring dashboard**: **Next.js 15** (`monitoring/`) + FastAPI **`GET /monitoring/snapshot`**.
+---
+
+<a id="depo-yapisi"></a>
+## Depo yapısı
+
+```
+.
+├── api/                    # FastAPI uygulaması (main.py, requirements.txt)
+├── db/init/                # PostgreSQL: şema + seed (01 … 05)
+├── freeradius/config/      # sites, mods, policy.d
+├── monitoring/             # Next.js bonus paneli
+├── redis/                  # redis.conf
+├── scripts/                # smoke-test.sh, radacct-demo.sh, …
+├── docs/                   # RAPOR-TASLAK, ISTEK-KOMUTLARI, terimler, plan
+├── docker-compose.yml
+├── .env.example
+└── Makefile
+```
+
+---
+
+<a id="ortam-degiskenleri"></a>
+## Ortam değişkenleri
+
+1. `.env.example` dosyasını kopyalayıp **`.env`** oluşturun.
+2. **`POSTGRES_PASSWORD`** değerini güçlü bir parola ile değiştirin.
+3. `.env` `.gitignore` içindedir; repoya eklenmez.
+
+Açıklamalar ve tüm anahtarlar: **`.env.example`**.
+
+**Geliştirme:** Kod değişince API’yi yeniden başlatmadan denemek için `.env` içinde `UVICORN_RELOAD=1` kullanın; ardından API konteynerini yeniden başlatın.
+
+---
+
+<a id="veritabani-init"></a>
+## Veritabanı başlatma (init sırası)
+
+Yeni bir Postgres volume ile ilk `docker compose up` çalıştığında `docker-entrypoint-initdb.d` şu sırayı uygular:
+
+| Dosya | İçerik |
+|-------|--------|
+| `01-freeradius-schema.sql` | FreeRADIUS tabloları (`radcheck`, `radreply`, `radacct`, …) |
+| `02-seed-demo-user.sql` | Demo kullanıcılar (PAP hash, CHAP lab kullanıcısı, admin) |
+| `03-authorization-policy.sql` | Gruplar, VLAN (`radgroupreply`), `radusergroup` |
+| `04-mab-demo-device.sql` | MAB demo MAC / kullanıcı |
+| `05-radreply-demo.sql` | `radreply` örneği: `demo` → `Session-Timeout` (PDF 3.6) |
+
+**Eski volume:** Bu SQL’ler otomatik çalışmaz; aşağıdaki komutları **proje kökünden** bir kez çalıştırın:
 
 ```bash
-docker compose up -d
-# Panel (varsayilan): http://localhost:3000  —  .env: MONITORING_PORT
-curl -s http://localhost:8000/monitoring/snapshot | jq .
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/02-seed-demo-user.sql
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/03-authorization-policy.sql
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/04-mab-demo-device.sql
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/05-radreply-demo.sql
 ```
 
-Yerel gelistirme (Docker’siz Next): `cd monitoring && npm install && INTERNAL_API_URL=http://127.0.0.1:8000 npm run dev`
+`radreply` doğrulama örneği:
 
-Imaj yenileme: `docker compose build monitoring && docker compose up -d monitoring`
+```bash
+docker exec nac_postgres psql -U nac -d nacdb -c \
+  "SELECT username, attribute, op, value FROM radreply ORDER BY id;"
+```
 
-**Panel “snapshot alınamadı” diyorsa:** Eski imajda sayfa build anında statik gömülmüş olabilir — `docker compose build monitoring --no-cache && docker compose up -d monitoring`. `.env` içinde **`INTERNAL_API_URL=http://localhost:8000` kullanmayın** (container içinde localhost yanlış host); boş bırakın veya compose’daki `http://api:8000` kalsın.
+---
 
-**`curl .../monitoring/snapshot` → HTTP 404:** API süreci güncel `main.py` yüklemeden çalışıyordur (`uvicorn` varsayılan olarak `--reload` kullanmaz). Çözüm: `docker compose restart api` veya `.env` içinde `UVICORN_RELOAD=1` ile geliştirme. Doğrulama: `curl -s http://localhost:8000/ | jq .` çıktısında `"version": "0.2.2"` ve `"monitoring": "/monitoring/snapshot"` görünmeli.
+<a id="saglik-ve-smoke"></a>
+## Sağlık kontrolü ve smoke test
 
-## Adim 2 — PAP / CHAP, PostgreSQL, hash, Redis rate limit, radtest
+- **API:** `GET /health` — Postgres + Redis ping (200 / aksi halde 503).
+- **Kök:** `GET http://localhost:8000/` — sürüm ve kısa rota listesi.
+- **Otomatik:** `bash scripts/smoke-test.sh` veya `make smoke` (API + isteğe bağlı `radtest` / Postgres).
 
-Ozet (odev maddeleriyle esleme):
+```bash
+make ps      # docker compose ps
+make smoke
+```
+
+---
+
+<a id="dokumantasyon"></a>
+## Dokümantasyon (rapor / komutlar)
+
+| Dosya | Amaç |
+|-------|------|
+| [`docs/RAPOR-TASLAK.md`](docs/RAPOR-TASLAK.md) | Teknik rapor boş başlıklar |
+| [`docs/ISTEK-KOMUTLARI.md`](docs/ISTEK-KOMUTLARI.md) | curl, radtest, radclient, psql |
+| [`docs/TERIMLER-NAC.md`](docs/TERIMLER-NAC.md) | Terimler (octet, session id, NAS, …) |
+| [`docs/CORE-DURUM-VE-PLAN.md`](docs/CORE-DURUM-VE-PLAN.md) | PDF çekirdek maddeleri + kalan plan |
+
+---
+
+<a id="adim-2-auth"></a>
+## Adım 2 — Kimlik doğrulama (PAP, CHAP, MAB, rate limit)
+
+Özet (ödev maddeleriyle eşleme):
 
 | Madde | Uygulama |
 |--------|-----------|
-| Kimlik bilgileri PostgreSQL | `radcheck` tablosu (`demo`, `chapuser`, MAB: `aabbccddeeff`) |
-| Parola hash, plaintext kabul edilmez | **PAP:** `demo` kullanicisi `MD5-Password` (duz metin yok) |
-| Basarisiz giris rate limit (Redis) | `freeradius/config/policy.d/nac` — tum auth denemeleri `User-Name` bazli sayilir |
-| Dogrulama `radtest` | Asagidaki iki komut |
+| Kimlik bilgileri PostgreSQL | `radcheck` (`demo`, `chapuser`, MAB: `aabbccddeeff`) |
+| Parola hash; düz metin zorunluluğu (PAP) | **PAP:** `demo` → `MD5-Password` |
+| Başarısız giriş rate limit | `freeradius/config/policy.d/nac` — `User-Name` bazlı sayaç |
+| Doğrulama `radtest` | Aşağıdaki komutlar |
 
-**CHAP ve hash:** RFC 1994 CHAP, sunucunun paylasilan sirri (parolayi) **dogrulama aninda** bilmesini gerektirir; veritabaninda yalnizca tek yonlu hash tutuldugunda **standart CHAP dogrulamasi yapilamaz**. Bu yuzden odevdeki **"plaintext yok / hash"** sarti **PAP (`demo` + `MD5-Password`)** ile tam karsilanir. **CHAP** gosterimi icin ayri lab kullanicisi **`chapuser`** yalnizca `Cleartext-Password` ile eklenmistir; rapor/videoda bu teknik zorunluluk kisaca aciklanmalidir.
+**CHAP ve hash:** RFC 1994 CHAP, sunucunun paylaşılan sırrı doğrulama anında bilmesini gerektirir; veritabanında yalnızca tek yönlü hash varken **standart CHAP doğrulaması yapılamaz**. Bu nedenle ödevdeki “plaintext yok / hash” şartı **PAP (`demo` + `MD5-Password`)** ile karşılanır. **CHAP** gösterimi için **`chapuser`** yalnızca `Cleartext-Password` ile eklenmiştir; rapor/videoda bu teknik nokta kısaca anlatılmalıdır.
 
-### radtest (container icinden)
+### radtest (konteyner içinden)
 
-**PAP (hash’li kullanici):**
+**PAP (hash’li kullanıcı):**
 
 ```bash
 docker exec nac_radius radtest demo DemoPass123 127.0.0.1 0 testing123
 ```
 
-**CHAP (lab kullanicisi — yukaridaki notu oku):**
+**CHAP (lab kullanıcısı — yukarıdaki notu okuyun):**
 
 ```bash
 docker exec nac_radius radtest -t chap chapuser ChapPass789 127.0.0.1 0 testing123
 ```
 
-**MAB (MAC Authentication Bypass) — bonus / lab:**
+**MAB (MAC Authentication Bypass) — bonus / lab**
 
-- **Politika:** `freeradius/config/policy.d/nac_mab` — `User-Name` ve `User-Password` MAC formatindaysa (iki nokta, tire veya 12 hex) **12 hex kucuk harfe** normalize edilir; `radcheck` + PAP ile eslesir.
-- **Demo cihaz:** MAC `AA:BB:CC:DD:EE:FF` → kullanici `aabbccddeeff` / parola ayni (`Cleartext-Password`), grup **guest** → VLAN **30** (`db/init/04-mab-demo-device.sql`).
+- **Politika:** `freeradius/config/policy.d/nac_mab` — `User-Name` / `User-Password` MAC biçimindeyse **12 hex küçük harfe** normalize edilir; `radcheck` + PAP ile eşleşir.
+- **Demo cihaz:** MAC `AA:BB:CC:DD:EE:FF` → kullanıcı `aabbccddeeff`, parola aynı (`Cleartext-Password`), grup **guest** → VLAN **30** (`db/init/04-mab-demo-device.sql`).
 
 ```bash
 docker exec nac_redis redis-cli DEL nac_auth_fail_aabbccddeeff   # rate limit varsa
 docker exec nac_radius radtest -x AA-BB-CC-DD-EE-FF AA-BB-CC-DD-EE-FF 127.0.0.1 0 testing123
 ```
 
-Ciktda `Tunnel-Private-Group-Id = 30` beklenir. **Not:** MAB’te parola MAC ile ayni oldugu icin bu **lab senaryosudur**; uretimde port bazli guvenlik + MAC whitelist sarttir.
+Çıktıda `Tunnel-Private-Group-Id = 30` beklenir. **Not:** Üretimde port güvenliği + MAC whitelist şarttır; bu senaryo lab içindir.
 
-- Basarisiz girisler Redis'te `nac_auth_fail_<User-Name>` anahtari ile sayilir; **5** basarisiz reddedilen denemeden sonra **6.** istekte (sifre dogru olsa bile) `Access-Reject` + `Reply-Message`. TTL **900 sn**; test icin: `docker exec nac_redis redis-cli DEL nac_auth_fail_demo`. Basarili giris yapilabildiginde sayac silinir.
-
-**Not:** Postgres volume daha once olusturulduysa seed otomatik calismamis olabilir:
+**Kayıtlı olmayan MAC:** `policy.d/nac_mab_unknown` — veritabanında eşleşme yoksa `Access-Reject` + `Reply-Message`.
 
 ```bash
-docker exec -i nac_postgres psql -U nac -d nacdb < db/init/02-seed-demo-user.sql
-docker exec -i nac_postgres psql -U nac -d nacdb < db/init/04-mab-demo-device.sql
+docker exec nac_radius radtest -x EE-EE-EE-EE-EE-EE EE-EE-EE-EE-EE-EE 127.0.0.1 0 testing123
+# Beklenen: Access-Reject + Reply-Message
 ```
 
-## Adim 3 — Yetkilendirme (grup / VLAN) ve FastAPI + rlm_rest
+**Rate limit:** Başarısız denemeler Redis’te `nac_auth_fail_<User-Name>` ile sayılır; **5** başarısız reddedilen denemeden sonra **6.** istekte (parola doğru olsa bile) `Access-Reject`. TTL **900 sn**. Test için: `docker exec nac_redis redis-cli DEL nac_auth_fail_demo`. Başarılı girişte sayaç silinir.
+
+---
+
+<a id="adim-3-authorize"></a>
+## Adım 3 — Yetkilendirme (grup, VLAN, `rlm_rest`)
 
 - **Gruplar:** `admin`, `employee`, `guest` — `radusergroup` + `radgroupreply` (`db/init/03-authorization-policy.sql`).
 - **VLAN:** `Tunnel-Type`, `Tunnel-Medium-Type`, `Tunnel-Private-Group-Id` — admin **10**, employee **20**, guest **30**.
-- **rlm_sql:** `read_groups = no` — VLAN tekrar etmesin; grup satirlari yalnizca API tarafindan okunur.
-- **rlm_rest:** `mods-enabled/rest` → `POST http://api:8000/authorize` (JSON cevap → reply attribute).
-- **Kullanicilar:** `demo`→employee, `chapuser`→guest, `admin` / `AdminPass!99` (MD5) → admin grubu.
+- **rlm_sql:** `read_groups = no` — VLAN tekrarını önlemek için grup satırları yalnızca API tarafından okunur.
+- **rlm_rest:** `mods-enabled/rest` → `POST http://api:8000/authorize` (JSON yanıt → reply attribute).
+- **Kullanıcılar:** `demo` → employee, `chapuser` → guest, `admin` / `AdminPass!99` (MD5) → admin.
 
-### VLAN dogrulama (radtest -x)
+### VLAN doğrulama (`radtest -x`)
 
 ```bash
-docker exec nac_redis redis-cli DEL nac_auth_fail_demo   # rate limit varsa temizle
+docker exec nac_redis redis-cli DEL nac_auth_fail_demo   # rate limit varsa
 docker exec nac_radius radtest -x demo DemoPass123 127.0.0.1 0 testing123
 ```
 
-Ciktda `Tunnel-Private-Group-Id = 20` (employee) gorulmeli.
+Çıktıda `Tunnel-Private-Group-Id = 20` (employee) görülmeli.
 
-### API dogrudan
+### API doğrudan
 
 ```bash
 curl -s -X POST http://localhost:8000/authorize -H "Content-Type: application/json" \
   -d '{"User-Name":{"type":"string","value":["demo"]}}' | jq .
 ```
 
-**Not:** Eski Postgres volume icin: `docker exec -i nac_postgres psql -U nac -d nacdb < db/init/03-authorization-policy.sql`
+**Not:** Eski Postgres volume için yetkilendirme + `radreply` örneği: [Veritabanı başlatma](#veritabani-init) bölümündeki `03` ve `05` (veya tüm zincir).
 
-**Compose sira:** `freeradius`, API ayakta olduktan sonra baslar (`rlm_rest` icin).
+---
 
-## Adim 4 — Accounting, Redis aktif oturum, API
+<a id="adim-4-accounting"></a>
+## Adım 4 — Accounting, Redis, API
 
-- **FreeRADIUS:** `acct` bolumunde `sql` + `policy.d/nac_accounting` ile `radacct` ve Redis `nac:acct:<Acct-Unique-Session-Id>` guncellenir.
-- **API:** `POST /accounting` ayni mantigi HTTP ile test etmek icin (FreeRADIUS SQL’den bagimsiz cagri); `GET /sessions/active` Redis ozeti.
+- **FreeRADIUS:** `acct` bölümünde `sql` + `policy.d/nac_accounting` ile `radacct` ve Redis `nac:acct:<Acct-Unique-Session-Id>` güncellenir.
+- **API:** `POST /accounting` aynı mantığı HTTP ile test etmek için; `GET /sessions/active` Redis özetini döner.
 
-**404 / eski kod:** API container `--reload` kullanmiyorsa `main.py` degisince route gorunmeyebilir:
-
-```bash
-docker compose restart api
-# veya imaji yeniden uretmek icin:
-# docker compose build api && docker compose up -d --force-recreate api
-```
-
-### Accounting (curl — snake_case veya RADIUS alan adlari)
+### Accounting (`curl` — snake_case veya RADIUS alan adları)
 
 ```bash
 curl -s -X POST http://localhost:8000/accounting -H "Content-Type: application/json" \
@@ -159,7 +253,6 @@ curl -s -X POST http://localhost:8000/accounting -H "Content-Type: application/j
     "nas_ip_address": "10.0.0.1"
   }' | jq .
 
-# RADIUS tarzi anahtarlar da kabul edilir:
 curl -s -X POST http://localhost:8000/accounting -H "Content-Type: application/json" \
   -d '{
     "Acct-Status-Type": "Interim-Update",
@@ -185,44 +278,74 @@ curl -s -X POST http://localhost:8000/accounting -H "Content-Type: application/j
 curl -s http://localhost:8000/sessions/active | jq .
 ```
 
-### FreeRADIUS accounting — `radclient` (onerilen: container icinden)
+### FreeRADIUS accounting — `radclient`
 
-`radclient` paketi `nac_radius` imajinda vardir; **kaynak adres `127.0.0.1`** oldugu icin `clients.conf` icindeki `localhost` istemcisi ile uyumludur. Makineden dogrudan `localhost:1813` denemek bazen Docker NAT yuzunden istemci eslesmez; bu yuzden asagidaki yontem daha guvenilir.
+`radclient` `nac_radius` imajında vardır; kaynak adres `127.0.0.1` olduğu için `clients.conf` ile uyumludur.
 
 ```bash
 bash scripts/radacct-demo.sh
 ```
 
-Tekil paket ornegi:
+Tekil paket örneği ve sorgular için detay: [`docs/ISTEK-KOMUTLARI.md`](docs/ISTEK-KOMUTLARI.md).
+
+**Not:** `Stop` sonrası Redis anahtarı silinir; `GET /sessions/active` boş dönmesi beklenen davranıştır.
+
+---
+
+<a id="bonus-monitoring"></a>
+## Bonus: İzleme paneli
+
+Ödev PDF Bölüm 6: *“Bonus (+%5): PAP + MAB birlikte, **veya** monitoring dashboard, **veya** unit test.”* — bunlar alternatif bonus kalemleridir.
+
+Bu repoda **monitoring dashboard**: **Next.js** (`monitoring/`) + FastAPI **`GET /monitoring/snapshot`**.
 
 ```bash
-docker exec -i nac_radius radclient -x -r 2 127.0.0.1:1813 acct testing123 <<'EOF'
-User-Name = "demo"
-Acct-Status-Type = Start
-Acct-Session-Id = "manual-1"
-NAS-IP-Address = 127.0.0.1
-EOF
-
-# Start + Interim sonrasi (Stop oncesi) aktif oturum:
-curl -s http://localhost:8000/sessions/active | jq .
-
-# radacct satiri (Postgres kullanici/db .env ile ayni olmali):
-docker exec nac_postgres psql -U nac -d nacdb -c \
-  "SELECT acctsessionid, username, acctstoptime FROM radacct ORDER BY radacctid DESC LIMIT 5;"
-
-docker exec nac_redis redis-cli --scan --pattern 'nac:acct:*'
+docker compose up -d
+# Panel: http://localhost:3000  —  MONITORING_PORT .env ile değişir
+curl -s http://localhost:8000/monitoring/snapshot | jq .
 ```
 
-**Not:** `Accounting-Stop` geldikten sonra Redis anahtari silinir; `GET /sessions/active` bos donmesi beklenen davranistir.
+Yerel geliştirme (Docker’sız Next):
 
-## Teslim / rapor icin kontrol listesi
+```bash
+cd monitoring && npm install && INTERNAL_API_URL=http://127.0.0.1:8000 npm run dev
+```
 
-- [ ] `docker compose ps` — tum servisler healthy
+İmaj yenileme: `make monitoring-build && docker compose up -d monitoring` veya `docker compose build monitoring && docker compose up -d monitoring`.
+
+**Panel “snapshot alınamadı”:** Eski imajda build zamanı sabitlenmiş olabilir — `docker compose build monitoring --no-cache && docker compose up -d monitoring`. `.env` içinde **`INTERNAL_API_URL=http://localhost:8000` kullanmayın** (monitoring konteynerinde yanlış host); compose zaten `http://api:8000` atar.
+
+**`curl .../monitoring/snapshot` → 404:** API güncel `main.py` yüklemeden çalışıyor olabilir. `docker compose restart api` veya `UVICORN_RELOAD=1`. Doğrulama: `curl -s http://localhost:8000/ | jq .` → `"version": "0.2.2"` ve `"monitoring": "/monitoring/snapshot"`.
+
+**API dokümantasyonu (Swagger):** `http://localhost:8000/docs`
+
+---
+
+<a id="teslim-checklist"></a>
+## Teslim kontrol listesi
+
+- [ ] `docker compose ps` — servisler healthy
 - [ ] PAP + VLAN: `radtest -x demo ...` → `Tunnel-Private-Group-Id`
-- [ ] MAB (istege bagli): `radtest -x AA-BB-CC-DD-EE-FF ...` → VLAN 30
-- [ ] Rate limit: ardisik basarisiz deneme → `Access-Reject`
-- [ ] `bash scripts/radacct-demo.sh` → `radacct` satiri + (Stop oncesi) Redis anahtari
+- [ ] MAB (isteğe bağlı): `radtest -x AA-BB-CC-DD-EE-FF ...` → VLAN 30
+- [ ] Rate limit: ardışık başarısız deneme → `Access-Reject`
+- [ ] `bash scripts/radacct-demo.sh` → `radacct` satırı + (Stop öncesi) Redis anahtarı
 - [ ] API: `/health`, `/docs`, `/users`, `/sessions/active`, `POST /accounting`
 - [ ] `make smoke` veya `bash scripts/smoke-test.sh`
-- [ ] Bonus: monitoring `http://localhost:3000` + videoda kisa gosterim
-- [ ] Kisa video: auth + accounting + API ekran goruntusu
+- [ ] Bonus: monitoring `http://localhost:3000` + videoda kısa gösterim
+- [ ] Kısa video: auth + accounting + API ekran görüntüsü
+- [ ] Teknik rapor + anlamlı Git geçmişi (PDF Bölüm 4)
+
+---
+
+<a id="sorun-giderme"></a>
+## Sorun giderme
+
+| Belirti | Öneri |
+|---------|--------|
+| RADIUS auth başarısız, API log yok | `docker compose ps` — `api` healthy mi? `freeradius` API’ye bağlıdır. |
+| API route yok (404) | `docker compose restart api` veya `docker compose build api && docker compose up -d --force-recreate api` |
+| Seed / kullanıcı yok | [Veritabanı başlatma](#veritabani-init) — eski volume için `02`–`05` |
+| Monitoring API’ye erişemiyor | Konteyner içi adres `http://api:8000`; `.env`’de localhost vermeyin |
+| Apple Silicon RADIUS yavaş / platform | `platform: linux/amd64` — emülasyon normaldir |
+
+Daha fazla komut: [`docs/ISTEK-KOMUTLARI.md`](docs/ISTEK-KOMUTLARI.md).

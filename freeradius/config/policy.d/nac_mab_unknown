@@ -1,0 +1,28 @@
+#
+# NAC / MAB: Kayitli olmayan MAC icin acik Access-Reject + Reply-Message
+# (PDF: bilinmeyen MAC icin varsayilan politika — reject)
+#
+# sql authorize sonrasi: radcheck'te bu kullanici yoksa Cleartext-Password / MD5-Password
+# control'a yazilmaz. User-Name MAC formatindaysa bunu acikca reddet.
+#
+# Not: nac_mab_normalize ile User-Name zaten 12 hex (kucuk) veya tire/iki nokta formu
+# sql ONCESI normalize edilir; burada hem 12 hex hem 6-cift MAC kalibi kontrol edilir.
+#
+nac_mab_unknown_reject {
+	if (&User-Name && (&User-Name =~ /^([0-9a-f]{2})[^0-9a-f]?([0-9a-f]{2})[^0-9a-f]?([0-9a-f]{2})[^0-9a-f]?([0-9a-f]{2})[^0-9a-f]?([0-9a-f]{2})[^0-9a-f]?([0-9a-f]{2})$/i)) {
+		if (!&control:Cleartext-Password && !&control:MD5-Password) {
+			update reply {
+				&Reply-Message := "Bu MAC adresi NAC veritabaninda kayitli degil."
+			}
+			reject
+		}
+	}
+	elsif (&User-Name && (&User-Name =~ /^[0-9a-f]{12}$/i)) {
+		if (!&control:Cleartext-Password && !&control:MD5-Password) {
+			update reply {
+				&Reply-Message := "Bu MAC adresi NAC veritabaninda kayitli degil."
+			}
+			reject
+		}
+	}
+}

@@ -149,6 +149,9 @@ authorize {
 	#  See "Authorization Queries" in `mods-config/sql/main/$driver/queries.conf`
 	sql
 
+	# NAC: MAB — kayitli olmayan MAC
+	nac_mab_unknown_reject
+
 	-rest
 
 	#

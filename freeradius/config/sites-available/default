@@ -465,6 +465,9 @@ authorize {
 	#  See "Authorization Queries" in mods-available/sql
 	sql
 
+	# NAC: MAB — kayitli olmayan MAC (sql'de parola yok) acik reject
+	nac_mab_unknown_reject
+
 	# NAC: VLAN / grup politikasi FastAPI (rlm_rest) — basarisizsa auth yine sql ile devam (-rest)
 	-rest
 

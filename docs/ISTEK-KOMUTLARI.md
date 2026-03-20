@@ -140,6 +140,17 @@ docker exec nac_redis redis-cli DEL nac_auth_fail_aabbccddeeff
 docker exec nac_radius radtest -x AA-BB-CC-DD-EE-FF AA-BB-CC-DD-EE-FF 127.0.0.1 0 testing123
 ```
 
+**Ödev PDF (3.7): MAB + `radclient` + `Calling-Station-Id`**
+
+```bash
+docker exec -i nac_radius radclient -x 127.0.0.1:1812 auth testing123 <<'EOF'
+User-Name = "AA-BB-CC-DD-EE-FF"
+User-Password = "AA-BB-CC-DD-EE-FF"
+Calling-Station-Id = "AA-BB-CC-DD-EE-FF"
+NAS-IP-Address = 127.0.0.1
+EOF
+```
+
 **Accounting (radclient)**
 
 ```bash
@@ -161,12 +172,25 @@ EOF
 
 ## 6. Redis / Postgres (isteğe bağlı)
 
+**Eski Postgres volume** (ilk kurulumdan sonra eklenen seed’ler için):
+
+```bash
+# Sıra önemli değil; dosyalar idempotent (WHERE NOT EXISTS)
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/02-seed-demo-user.sql
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/03-authorization-policy.sql
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/04-mab-demo-device.sql
+docker exec -i nac_postgres psql -U nac -d nacdb < db/init/05-radreply-demo.sql
+```
+
+`05-radreply-demo.sql`: PDF 3.6 `radreply` tablosunda örnek satır (`demo` → `Session-Timeout` 28800 sn; VLAN ile çakışmaz).
+
 ```bash
 docker exec nac_redis redis-cli PING
 docker exec nac_redis redis-cli KEYS 'nac:acct:*'
 docker exec nac_redis redis-cli DEL nac_auth_fail_demo
 
 docker exec nac_postgres psql -U nac -d nacdb -c "SELECT COUNT(*) FROM radcheck;"
+docker exec nac_postgres psql -U nac -d nacdb -c "SELECT username, attribute, value FROM radreply ORDER BY id;"
 docker exec nac_postgres psql -U nac -d nacdb -c "SELECT acctsessionid, username, acctstoptime FROM radacct ORDER BY radacctid DESC LIMIT 5;"
 ```
 
