@@ -1,0 +1,39 @@
+#
+# NAC lab: failed authentication rate limiting via Redis
+# Key: nac_auth_fail_<User-Name> (avoid ':' inside %{redis:...} expansion)
+# Lockout after N failures within TTL seconds (set on first failure).
+#
+nac_rate_limit_check {
+	if (&User-Name) {
+		#
+		# Compare as string; %{integer:...} on redis reply was unreliable in tests.
+		#
+		if ("%{redis:GET nac_auth_fail_%{User-Name}}" =~ /^([5-9]|[1-9][0-9]+)$/) {
+			update reply {
+				&Reply-Message := "Too many failed login attempts. Try again later."
+			}
+			reject
+		}
+	}
+}
+
+nac_rate_limit_register_fail {
+	if (&User-Name) {
+		update request {
+			&Tmp-Integer-1 := "%{integer:%{%{redis:INCR nac_auth_fail_%{User-Name}}:-0}}"
+		}
+		if (&request:Tmp-Integer-1 == 1) {
+			update request {
+				&Tmp-String-0 += "%{redis:EXPIRE nac_auth_fail_%{User-Name} 900}"
+			}
+		}
+	}
+}
+
+nac_rate_limit_clear_on_success {
+	if (&User-Name && "%{reply:Packet-Type}" == "Access-Accept") {
+		update request {
+			&Tmp-String-1 += "%{redis:DEL nac_auth_fail_%{User-Name}}"
+		}
+	}
+}

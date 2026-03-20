@@ -1,0 +1,26 @@
+#
+# Accounting: aktif oturumlari Redis'te tut (Start / Interim-Update = SET+TTL, Stop = DEL)
+# Anahtar: nac:acct:<Acct-Unique-Session-Id>
+# Deger: user|NAS|Acct-Session-Id|in_octets|out_octets|session_time
+#
+nac_acct_redis_cache {
+	if (&Acct-Unique-Session-Id) {
+		if ("%{Acct-Status-Type}" == "Stop") {
+			update request {
+				&Tmp-String-1 += "%{redis: DEL nac:acct:%{Acct-Unique-Session-Id}}"
+			}
+		}
+		elsif ("%{Acct-Status-Type}" == "Interim-Update") {
+			update request {
+				&Tmp-String-0 := "%{User-Name}|%{%{NAS-IPv6-Address}:-%{NAS-IP-Address}}|%{Acct-Session-Id}|%{%{Acct-Input-Octets}:-0}|%{%{Acct-Output-Octets}:-0}|%{%{Acct-Session-Time}:-0}"
+				&Tmp-String-1 += "%{redis: SET nac:acct:%{Acct-Unique-Session-Id} %{Tmp-String-0} EX 7200}"
+			}
+		}
+		elsif ("%{Acct-Status-Type}" == "Start") {
+			update request {
+				&Tmp-String-0 := "%{User-Name}|%{%{NAS-IPv6-Address}:-%{NAS-IP-Address}}|%{Acct-Session-Id}|%{%{Acct-Input-Octets}:-0}|%{%{Acct-Output-Octets}:-0}|%{%{Acct-Session-Time}:-0}"
+				&Tmp-String-1 += "%{redis: SET nac:acct:%{Acct-Unique-Session-Id} %{Tmp-String-0} EX 7200}"
+			}
+		}
+	}
+}

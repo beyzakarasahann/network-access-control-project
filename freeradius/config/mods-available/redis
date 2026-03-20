@@ -9,8 +9,8 @@
 #
 redis {
 	#  Host where the redis server is located.
-	#  We recommend using ONLY 127.0.0.1 !
-	server = 127.0.0.1
+	# Docker Compose service name (internal network)
+	server = redis
 
 	#  Select the Redis logical database having the specified zero-based numeric index.
 #	database = 0

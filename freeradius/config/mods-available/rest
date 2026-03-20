@@ -40,13 +40,8 @@ rest {
 #		check_cert_cn = yes
 	}
 
-	# rlm_rest will open a connection to the server specified in connect_uri
-	# to populate the connection cache, ready for the first request.
-	# The server will not start if the server specified is unreachable.
-	#
-	# If you wish to disable this pre-caching and reachability check,
-	# comment out the configuration item below.
-	connect_uri = "http://127.0.0.1/"
+	# Diger rest alt bolumleri ${..connect_uri} kullanir; ayrica baglanti on kontrolu icin.
+	connect_uri = "http://api:8000"
 
 	#
 	#  How long before new connection attempts timeout, defaults to 4.0 seconds.
@@ -194,8 +189,10 @@ rest {
 	#  The status code is held in %{reply:REST-HTTP-Status-Code}.
 	#
 	authorize {
-		uri = "${..connect_uri}/user/%{User-Name}/mac/%{Called-Station-ID}?action=authorize"
-		method = 'get'
+		uri = "${..connect_uri}/authorize"
+		method = post
+		body = json
+		timeout = 5.0
 		tls = ${..tls}
 	}
 	authenticate {
@@ -259,12 +256,8 @@ rest {
 	#  The connection pool is used to pool outgoing connections.
 	#
 	pool {
-		#  Connections to create during module instantiation.
-		#  If the server cannot create specified number of
-		#  connections during instantiation it will exit.
-		#  Set to 0 to allow the server to start without the
-		#  web service being available.
-		start = ${thread[pool].start_servers}
+		#  API yokken de radius ayaga kalksin; baglanti ilk istekte acilir.
+		start = 0
 
 		#  Minimum number of connections to keep open
 		min = ${thread[pool].min_spare_servers}

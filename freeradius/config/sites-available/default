@@ -310,6 +310,12 @@ authorize {
 	#
 	filter_username
 
+	# NAC: MAB — MAC formatini radcheck kullanici adiyla eslestirmek icin normalize et
+	nac_mab_normalize
+
+	# NAC: block users with too many recent failed logins (Redis)
+	nac_rate_limit_check
+
 	#
 	#  Some broken equipment sends passwords with embedded zeros.
 	#  i.e. the debug output will show
@@ -458,6 +464,9 @@ authorize {
 	#
 	#  See "Authorization Queries" in mods-available/sql
 	sql
+
+	# NAC: VLAN / grup politikasi FastAPI (rlm_rest) — basarisizsa auth yine sql ile devam (-rest)
+	-rest
 
 	#
 	#  If you are using /etc/smbpasswd, and are also doing
@@ -734,6 +743,9 @@ accounting {
 	#  See "Accounting queries" in mods-available/sql
 	sql
 
+	# NAC: aktif oturum ozeti Redis (Accounting-Start / Interim / Stop)
+	nac_acct_redis_cache
+
 	#
 	#  If you receive stop packets with zero session length,
 	#  they will NOT be logged in the database.  The SQL module
@@ -890,6 +902,9 @@ post-auth {
 	#  See "Authentication Logging Queries" in mods-available/sql
 	sql
 
+	# NAC: clear Redis lockout counter on successful auth
+	nac_rate_limit_clear_on_success
+
 	#
 	#  Un-comment the following if you want to modify the user's object
 	#  in LDAP after a successful login.
@@ -992,6 +1007,8 @@ post-auth {
 	#  The "session-state" attributes are not available here.
 	#
 	Post-Auth-Type REJECT {
+		# NAC: count failed attempts in Redis (rate limit)
+		nac_rate_limit_register_fail
 		# log failed authentications in SQL, too.
 		sql
 		attr_filter.access_reject

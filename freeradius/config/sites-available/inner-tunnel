@@ -55,6 +55,12 @@ authorize {
 	#
 	filter_username
 
+	# NAC: MAB (EAP icinde nadiren; tutarlilik icin)
+	nac_mab_normalize
+
+	# NAC: Redis lockout (inner tunnel / EAP)
+	nac_rate_limit_check
+
 	#
 	#  Do checks on outer / inner User-Name, so that users
 	#  can't spoof us by using incompatible identities
@@ -142,6 +148,8 @@ authorize {
 	#
 	#  See "Authorization Queries" in `mods-config/sql/main/$driver/queries.conf`
 	sql
+
+	-rest
 
 	#
 	#  If you are using /etc/smbpasswd, and are also doing
@@ -336,6 +344,8 @@ post-auth {
 	#  See "Authentication Logging Queries" in `mods-config/sql/main/$driver/queries.conf`
 	sql
 
+	nac_rate_limit_clear_on_success
+
 	#
 	#  Un-comment the following if you have set
 	#  'edir = yes' in the ldap module sub-section of
@@ -398,6 +408,7 @@ post-auth {
 	#  'edir = yes' in the ldap module configuration
 	#
 	Post-Auth-Type REJECT {
+		nac_rate_limit_register_fail
 		# log failed authentications in SQL, too.
 		sql
 		attr_filter.access_reject

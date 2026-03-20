@@ -48,5 +48,8 @@ sql {
 
     group_attribute = "SQL-Group"
 
+    # VLAN politikasi FastAPI + rlm_rest ile; burada grup reply tekrar etmesin diye kapali.
+    read_groups = no
+
     $INCLUDE ${modconfdir}/${.:name}/main/${dialect}/queries.conf
 }

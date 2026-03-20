@@ -68,6 +68,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     networks:
       - nac_network
 
@@ -82,7 +84,7 @@ services:
       - ./api:/app
       - api_data:/app/data
     command: >
-      sh -c "pip install --no-cache-dir fastapi uvicorn &&
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
              uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "${API_PORT}:8000"
@@ -102,8 +104,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      freeradius:
         condition: service_healthy
     networks:
       - nac_network
